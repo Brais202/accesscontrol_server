@@ -34,3 +34,13 @@ class EntrySchedule(models.Model):
     
     def __str__(self):
         return f"{self.hsm_data.uid} - {self.day_of_week}: {self.start_time} a {self.end_time}"
+    
+
+class AppKey2(models.Model):
+    """
+    Modelo para almacenar la AppKey2 que se utiliza para todas las tarjetas.
+    """
+    key_value = models.CharField(max_length=32, help_text="Clave AES en hexadecimal (por ejemplo, 16 bytes => 32 hex)")
+
+    def __str__(self):
+        return f"AppKey2: {self.key_value}"

@@ -1,8 +1,8 @@
 
 # Create your views here.
 from django.shortcuts import render , redirect
-from django.http import JsonResponse
-from .models import AccessLog, HSMData, EntrySchedule
+from django.http import JsonResponse, HttpResponse
+from .models import AccessLog, HSMData, EntrySchedule , AppKey2
 from django.utils import timezone
 
 def submit_uid(request):
@@ -44,3 +44,11 @@ def authenticate_uid(request):
     log = AccessLog.objects.create(uid=uid, name=hsm_record.first_name,authorized=authorized)
       
     return redirect('log_list')
+
+def get_appkey2(request):
+    # Supongamos que solo existe una fila con la AppKey2
+    appkey_record = AppKey2.objects.first()
+    if not appkey_record:
+        return JsonResponse({"error": "No AppKey2 found"}, status=404)
+    
+    return JsonResponse(appkey_record.key_value, safe=False)
