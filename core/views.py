@@ -4,8 +4,50 @@ from django.shortcuts import render , redirect
 from django.http import JsonResponse, HttpResponse
 from .models import AccessLog, HSMData, EntrySchedule , AppKey2
 from django.utils import timezone
-import hmac
-import hashlib
+import os
+import binascii
+import subprocess
+
+# Parámetros de tu instalación
+PKCS11_TOOL = r"C:\Program Files\OpenSC Project\OpenSC\tools\pkcs11-tool.exe"
+PKCS11_MODULE = r"C:\SoftHSM2\lib\softhsm2-x64.dll"
+SLOT = "1945065443"
+PIN = "6666"
+KEY_ID = "02"
+
+# Rutas fijas de input/output
+INPUT_PATH = r"C:\Users\brais\Documents\input.bin"
+OUTPUT_PATH = r"C:\Users\brais\Documents\hmac.bin"
+
+def genera_hmac():
+    """
+    Llama a pkcs11-tool.exe para firmar INPUT_PATH
+    y volcar el resultado en OUTPUT_PATH.
+    """
+    args = [
+        PKCS11_TOOL,
+        "--module", PKCS11_MODULE,
+        "--slot", SLOT,
+        "--login",
+        "--pin", PIN,
+        "--session-rw",
+        "--sign",
+        "--mechanism", "SHA256-HMAC",
+        "--id", KEY_ID,
+        "--input-file", INPUT_PATH,
+        "--output-file", OUTPUT_PATH,
+    ]
+    # Ejecutamos la herramienta
+    res = subprocess.run(args, capture_output=True, text=True)
+    if res.returncode != 0:
+        # Puedes loguear res.stderr para depurar
+        raise RuntimeError(f"pkcs11-tool falló: {res.stderr.strip()}")
+    return True
+
+
+
+
+
 
 def submit_uid(request):
     uid = request.GET.get("uid")
@@ -56,44 +98,62 @@ def get_appkey2(request):
     return JsonResponse(appkey_record.key_value, safe=False)
 
 def compute_appkey0(request):
-    # Obtiene los parámetros de la petición
+    # 1) Parámetros
     cardid = request.GET.get('cardid')
-    msg = request.GET.get('msg')  # se espera "key UID"
-    
+    msg    = request.GET.get('msg')   # p.ej. "key UID"
+
     if not cardid or not msg:
-        return JsonResponse({"error": "Se requieren los parámetros 'cardid' y 'msg'"}, status=400)
-    
-    # Obtiene la AppMasterKey; se asume que existe al menos un registro en HSMData
+        return JsonResponse(
+            {"error": "Se requieren 'cardid' y 'msg'"},
+            status=400
+        )
+
+    # 2) Conversión a bytes
     try:
-        hsm_record = HSMData.objects.first()
-        masterkey = hsm_record.masterkey  # Este campo contiene la clave en hexadecimal
-    except Exception as e:
-        return JsonResponse({"error": "No se pudo obtener la AppMasterKey"}, status=500)
-    
+        cardid_bytes = binascii.unhexlify(cardid)
+    except binascii.Error:
+        return JsonResponse(
+            {"error": "El cardid debe ser hex válido"},
+            status=400
+        )
+    data = cardid_bytes + msg.encode('utf-8')
+
+    # 3) Escribe el fichero input.bin
     try:
-        # Convierte la masterkey de hexadecimal a bytes
-        key_bytes = bytes.fromhex(masterkey)
+        with open(INPUT_PATH, "wb") as f:
+            f.write(data)
     except Exception as e:
-        return JsonResponse({"error": "La AppMasterKey tiene un formato incorrecto"}, status=500)
-    
+        return JsonResponse(
+            {"error": f"No pude escribir {INPUT_PATH}: {e}"},
+            status=500
+        )
+
+    # 4) Lanza el hmac en el HSM vía pkcs11-tool
     try:
-        # Se asume que cardid se pasa como un string hexadecimal de 16 bytes
-        cardid_bytes = bytes.fromhex(cardid)
+        genera_hmac()
     except Exception as e:
-        return JsonResponse({"error": "El cardid debe estar en formato hexadecimal"}, status=400)
-    
-    # Convierte el mensaje a bytes
-    message_bytes = msg.encode()  # Ejemplo: "key UID"
-    
-    # Concatenamos cardid_bytes y message_bytes; el orden puede ajustarse según tu especificación
-    data = cardid_bytes + message_bytes
-    
-    # Calcula el HMAC-SHA256
-    mac = hmac.new(key_bytes, data, hashlib.sha256).digest()
-    
-    # Toma los primeros 16 bytes para formar la clave AES128 (AppKey0)
-    appkey0_bytes = mac[:16]
-    appkey0_hex = appkey0_bytes.hex().upper()
-    
-    # Devuelve solo la clave en formato JSON (un string sin envoltura)
+        return JsonResponse(
+            {"error": f"Error al generar el HMAC: {e}"},
+            status=500
+        )
+
+    # 5) Lee el resultado de hmac.bin
+    try:
+        with open(OUTPUT_PATH, "rb") as f:
+            full_mac = f.read()
+    except Exception as e:
+        return JsonResponse(
+            {"error": f"No pude leer {OUTPUT_PATH}: {e}"},
+            status=500
+        )
+
+    if len(full_mac) < 16:
+        return JsonResponse(
+            {"error": "El HMAC devuelto es demasiado corto."},
+            status=500
+        )
+
+    # 6) Toma los primeros 16 bytes y pásalos a hex
+    appkey0_hex = full_mac[:16].hex().upper()
+
     return JsonResponse(appkey0_hex, safe=False)
