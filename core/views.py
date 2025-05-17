@@ -7,6 +7,7 @@ from django.utils import timezone
 import os
 import binascii
 import subprocess
+from django.views.decorators.csrf import csrf_exempt
 
 # Parámetros de tu instalación
 PKCS11_TOOL = r"C:\Program Files\OpenSC Project\OpenSC\tools\pkcs11-tool.exe"
@@ -54,15 +55,48 @@ def submit_uid(request):
     if not uid:
         return JsonResponse({"error": "No UID provided"}, status=400)
     
-    # Crea el registro de acceso
+    # 1) Guardar el log básico
     log = AccessLog.objects.create(uid=uid)
     
-    # Responde con una confirmación y datos del registro
+    # 2) Intentar recuperar la info de la tarjeta
+    try:
+        hsm_record = HSMData.objects.get(uid__iexact=uid)
+    except HSMData.DoesNotExist:
+        # Si no existe, devolvemos authorized=False
+        log.authorized = False
+        log.save()
+        return JsonResponse({
+            "message":   "UID registered",
+            "uid":       log.uid,
+            "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "authorized": False,
+            "error":     "UID no registrado"
+        }, status=200)
+    
+    # 3) Comprobar franjas válidas para hoy
+    now         = timezone.now()
+    current_t   = now.time()
+    current_day = now.strftime('%A')
+    schedules   = EntrySchedule.objects.filter(
+        hsm_data=hsm_record,
+        day_of_week__iexact=current_day
+    )
+    authorized = any(
+        sched.start_time <= current_t <= sched.end_time
+        for sched in schedules
+    )
+    
+    # 4) Guardar el resultado en el log y devolver respuesta
+    log.name = hsm_record.first_name
+    log.authorized = authorized
+    log.save()
+    
     return JsonResponse({
-        "message": "UID registered",
-        "uid": log.uid,
-        "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-    })
+        "message":    "UID registered",
+        "uid":        log.uid,
+        "timestamp":  log.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        "authorized": authorized
+    }, status=200)
 
 def log_list(request):
     logs = AccessLog.objects.all().order_by("-timestamp")
@@ -89,13 +123,14 @@ def authenticate_uid(request):
       
     return redirect('log_list')
 
+@csrf_exempt
 def get_appkey2(request):
     # Supongamos que solo existe una fila con la AppKey2
     appkey_record = AppKey2.objects.first()
     if not appkey_record:
         return JsonResponse({"error": "No AppKey2 found"}, status=404)
     
-    return JsonResponse(appkey_record.key_value, safe=False)
+    return HttpResponse(appkey_record.key_value, content_type='text/plain')
 
 def compute_appkey0(request):
     # 1) Parámetros
