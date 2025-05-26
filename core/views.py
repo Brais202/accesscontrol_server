@@ -8,7 +8,8 @@ import os
 import binascii
 import subprocess
 from django.views.decorators.csrf import csrf_exempt
-
+from django.conf import settings
+from django.core.mail import send_mail
 # Parámetros de tu instalación
 PKCS11_TOOL = r"C:\Program Files\OpenSC Project\OpenSC\tools\pkcs11-tool.exe"
 PKCS11_MODULE = r"C:\SoftHSM2\lib\softhsm2-x64.dll"
@@ -49,7 +50,7 @@ def genera_hmac():
 
 
 
-
+@csrf_exempt
 def submit_uid(request):
     uid = request.GET.get("uid")
     if not uid:
@@ -65,6 +66,17 @@ def submit_uid(request):
         # Si no existe, devolvemos authorized=False
         log.authorized = False
         log.save()
+        send_mail(
+            subject="Acceso NO AUTORIZADO: tarjeta desconocida",
+            message=(
+                f"Se ha detectado un intento de acceso con UID no registrado:\n\n"
+                f"UID: {uid}\n"
+                f"Fecha y hora: {log.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            ),
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=[settings.ADMIN_EMAIL],
+            fail_silently=True,
+        )
         return JsonResponse({
             "message":   "UID registered",
             "uid":       log.uid,
@@ -90,6 +102,21 @@ def submit_uid(request):
     log.name = hsm_record.first_name
     log.authorized = authorized
     log.save()
+    if not authorized:
+        # --- Envío de email al admin ---
+        send_mail(
+            subject="Acceso NO AUTORIZADO: fuera de horario",
+            message=(
+                f"Intento de acceso fuera de horario permitido:\n\n"
+                f"UID: {uid}\n"
+                f"Usuario: {hsm_record.first_name}\n"
+                f"Fecha y hora: {log.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Día: {current_day}  Hora: {current_t}"
+            ),
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=[settings.ADMIN_EMAIL],
+            fail_silently=True,
+        )
     
     return JsonResponse({
         "message":    "UID registered",
