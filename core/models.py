@@ -11,6 +11,18 @@ class AccessLog(models.Model):
     def __str__(self):
         return f"{self.name} ({self.uid}) - {'Autorizado' if self.authorized else 'No autorizado'} - {self.timestamp}"
 
+
+class Role(models.Model):
+    """
+    Defines a role to be assigned to a User.
+    """
+    code = models.CharField(max_length=10, unique=True, help_text="Internal code for the role, e.g. 'admin', 'user'")
+    name = models.CharField(max_length=50, help_text="Descriptive name for the role")
+
+    def __str__(self):
+        return f"{self.code}: {self.name}"
+
+
 class HSMData(models.Model):
     """
     Simula la información que almacenaría un HSM.
@@ -19,9 +31,15 @@ class HSMData(models.Model):
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     masterkey = models.CharField(max_length=32, help_text="Clave maestra asociada, expresada en hexadecimal (32 caracteres para 128 bits)")
-    
+    role = models.ForeignKey(
+        Role, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="users",
+        help_text="Rol asociado al usuario"
+    )
     def __str__(self):
-        return f"{self.first_name} {self.last_name} ({self.uid})"
+        base = f"{self.first_name} {self.last_name} ({self.uid})"
+        return f"{base} - Rol: {self.role.code if self.role else 'Sin asignar'}"
 
 class EntrySchedule(models.Model):
     """

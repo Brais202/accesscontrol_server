@@ -6,6 +6,7 @@ from .models import AccessLog, HSMData, EntrySchedule , AppKey2
 from django.utils import timezone
 import os
 import binascii
+import re
 import subprocess
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
@@ -219,3 +220,13 @@ def compute_appkey0(request):
     appkey0_hex = full_mac[:16].hex().upper()
 
     return JsonResponse(appkey0_hex, safe=False)
+
+
+
+def parse_reader_id(msg: str) -> int:
+    """
+    Extrae el número de lector N de un mensaje del tipo 'GETUID<N>'.
+    Devuelve el entero N o None si no coincide el patrón.
+    """
+    m = re.match(r'GETUID(\d+)$', msg)
+    return int(m.group(1)) if m else None
